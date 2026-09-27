@@ -24,7 +24,7 @@ erDiagram
     folderCards["folder_cards"]
     languages["languages"]
     lexicalEntries["lexical_entries"]
-    senses["senses"]
+    word_senses["word_senses"]
     cards["cards"]
     cardRevisions["card_revisions"]
     userCardProgress["user_card_progress"]
@@ -38,8 +38,8 @@ erDiagram
     folders ||--o{ folderCards : contains
     cards ||--o{ folderCards : included_in
     languages ||..o{ lexicalEntries : language
-    lexicalEntries ||..o{ senses : meanings
-    senses ||..o{ cards : represented_by
+    lexicalEntries ||..o{ word_senses : meanings
+    word_senses ||..o{ cards : represented_by
     cards ||--o{ cardRevisions : versions
     users ||--o{ userCardProgress : learns
     cards ||--o{ userCardProgress : progress
@@ -48,7 +48,7 @@ erDiagram
     cards ||--o{ lessonResultCards : practiced
     users ||..o{ imports : submits
     imports ||..o{ importCandidates : produces
-    senses |o..o{ importCandidates : selected_sense
+    word_senses |o..o{ importCandidates : selected_word_sense
 ```
 
 Связь папок и карточек — многие ко многим через `folder_cards`. Прогресс относится к паре пользователь/карточка, а не к папке. Один смысл может иметь общую и несколько приватных карточек. Общая схема намеренно опускает медиа, авторизацию и технические таблицы — они раскрыты ниже.
@@ -132,7 +132,7 @@ erDiagram
         text visibility
         uuid owner_user_id FK "nullable"
     }
-    senses["senses"] {
+    word_senses["word_senses"] {
         uuid id PK
         uuid lexical_entry_id FK
         uuid definition_language_id FK
@@ -147,20 +147,20 @@ erDiagram
         text license_name "nullable"
         text attribution "nullable"
     }
-    senseSources["sense_sources"] {
+    wordSenseSources["word_sense_sources"] {
         uuid source_id PK, FK
         text external_sense_id PK
-        uuid sense_id FK
+        uuid word_sense_id FK
         text external_entry_id
     }
 
     languages ||..o{ lexicalEntries : source_language
-    languages ||..o{ senses : definition_language
+    languages ||..o{ word_senses : definition_language
     users |o..o{ lexicalEntries : private_owner
-    users |o..o{ senses : private_owner
-    lexicalEntries ||..o{ senses : meanings
-    contentSources ||--o{ senseSources : identifies
-    senses ||..o{ senseSources : provenance
+    users |o..o{ word_senses : private_owner
+    lexicalEntries ||..o{ word_senses : meanings
+    contentSources ||--o{ wordSenseSources : identifies
+    word_senses ||..o{ wordSenseSources : provenance
 ```
 
 Одинаковое написание не является уникальным ключом лексической единицы. Стабильный внешний ID смысла уникален в пределах источника, а не всего приложения. Приватный владелец nullable только для общего контента; общая запись не может зависеть от приватной словарной записи.
@@ -169,7 +169,7 @@ erDiagram
 
 ```mermaid
 erDiagram
-    senses["senses"] {
+    word_senses["word_senses"] {
         uuid id PK
     }
     languages["languages"] {
@@ -180,7 +180,7 @@ erDiagram
     }
     cards["cards"] {
         uuid id PK
-        uuid sense_id FK
+        uuid word_sense_id FK
         uuid language_id FK
         uuid translation_language_id FK
         uuid owner_user_id FK "nullable"
@@ -240,7 +240,7 @@ erDiagram
         uuid source_id PK, FK
     }
 
-    senses ||..o{ cards : meaning
+    word_senses ||..o{ cards : meaning
     languages ||..o{ cards : source_language
     languages ||..o{ cards : translation_language
     users |o..o{ cards : private_owner
@@ -262,7 +262,7 @@ erDiagram
 
 FK ревизии — пара `(card_id, revision)`, а не отдельная ссылка на номер revision. Указатели карточки используют пары `(id, published_revision)` и `(id, draft_revision)`, поэтому указывают только на собственные версии. Одна ревизия может быть текущей опубликованной/черновой максимум у своей карточки.
 
-У общей неархивной карточки уникальна пара `(sense_id, translation_language_id)`. Для приватных карточек такого ограничения нет. Порядок формы уникален в пределах ревизии; default-произношение ограничено одним на каждую форму ревизии, включая основную форму с `form_id=null`. Готовое аудио переиспользуется, но новое содержимое файла получает новый `media_assets.id` и ключ.
+У общей неархивной карточки уникальна пара `(word_sense_id, translation_language_id)`. Для приватных карточек такого ограничения нет. Порядок формы уникален в пределах ревизии; default-произношение ограничено одним на каждую форму ревизии, включая основную форму с `form_id=null`. Готовое аудио переиспользуется, но новое содержимое файла получает новый `media_assets.id` и ключ.
 
 ## 5. Папки и готовые подборки
 
@@ -437,15 +437,15 @@ erDiagram
         uuid id PK
         uuid import_id FK
         text analysis_item_key
-        uuid selected_sense_id FK "nullable"
+        uuid selected_word_sense_id FK "nullable"
         uuid selected_card_id FK "nullable"
         uuid created_card_id FK "nullable"
         text resolution_state
         boolean selected
     }
-    candidateSenseOptions["candidate_sense_options"] {
+    candidateWordSenseOptions["candidate_word_sense_options"] {
         uuid candidate_id PK, FK
-        uuid sense_id PK, FK
+        uuid word_sense_id PK, FK
         integer rank
     }
     candidateOccurrences["candidate_occurrences"] {
@@ -454,7 +454,7 @@ erDiagram
         jsonb segments
         text context
     }
-    senses["senses"] {
+    word_senses["word_senses"] {
         uuid id PK
     }
     cards["cards"] {
@@ -483,10 +483,10 @@ erDiagram
     jobs ||..o{ jobAttempts : attempts
     jobs |o..o{ imports : active_job
     imports ||..o{ importCandidates : produces
-    importCandidates ||--o{ candidateSenseOptions : alternatives
-    senses ||--o{ candidateSenseOptions : candidate_meaning
+    importCandidates ||--o{ candidateWordSenseOptions : alternatives
+    word_senses ||--o{ candidateWordSenseOptions : candidate_meaning
     importCandidates ||..o{ candidateOccurrences : occurrences
-    senses |o..o{ importCandidates : selected_sense
+    word_senses |o..o{ importCandidates : selected_word_sense
     cards |o..o{ importCandidates : selected_card
     cards |o..o{ importCandidates : created_card
 ```

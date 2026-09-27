@@ -49,11 +49,11 @@
 | `GET /folders/{id}/cards` | `recursive`, `status`, `hide_learned`, `q`, пагинация. | Уникальные карточки с прогрессом; `recursive=true` включает потомков. |
 | `PUT /folders/{id}/cards/{card_id}` | Добавить доступную карточку того же языка; тела нет. | `200` — связь уже есть, `201` — создана. |
 | `DELETE /folders/{id}/cards/{card_id}` | Удалить непосредственную связь. | `204`, независимо от наличия связи; другие папки не меняются. |
-| `GET /cards` | Поиск: `language_id`, `q`, `sense_id`, `scope=public|mine|accessible`, пагинация. | Доступные готовые карточки; свои черновики доступны при `scope=mine`. |
+| `GET /cards` | Поиск: `language_id`, `q`, `word_sense_id`, `scope=public|mine|accessible`, пагинация. | Доступные готовые карточки; свои черновики доступны при `scope=mine`. |
 | `GET /cards/{id}` | Полная карточка и текущий прогресс. | `Card`, текущая ревизия, доступные произношения. |
 | `GET /cards/{id}/revisions/{revision}` | Историческое содержимое доступной карточки. | Неизменяемая ревизия для старого урока; доступ проверяется заново. |
 | `GET /cards/{id}/related` | Другие значения той же лексической единицы, пагинация. | Доступные карточки с определениями; синонимы — отдельное будущее расширение. |
-| `POST /cards` | Приватный черновик: `{language_id, sense_id, content, folder_id?}` либо `{language_id, new_sense, content, folder_id?}`. | `201 Card` со статусом `draft`. Ровно один из `sense_id/new_sense`. |
+| `POST /cards` | Приватный черновик: `{language_id, word_sense_id, content, folder_id?}` либо `{language_id, new_word_sense, content, folder_id?}`. | `201 Card` со статусом `draft`. Ровно один из `word_sense_id/new_word_sense`. |
 | `PATCH /cards/{id}` | Собственный черновик/новая черновая ревизия: `{content}`, `If-Match`. | Карточка с номером новой черновой ревизии. Владелец и смысл не меняются. |
 | `POST /cards/{id}/publish` | `{draft_revision}`, `If-Match`; подготовить обязательное содержимое. | `202 {job_id, resource_id}`; после генерации публикуется ревизия. |
 | `GET /catalog/collections` | Готовые подборки: язык, `q`, `level`, пагинация. | Название, цель, размер, версия. Наличие конкретной подборки зависит от подготовленного контента. |
@@ -61,7 +61,7 @@
 | `GET /catalog/collections/{id}/cards` | `hide_learned`, пагинация. | Карточки подборки с прогрессом пользователя. |
 | `POST /catalog/collections/{id}/copy` | `{collection_version, parent_id, name}`. | `201 {folder_id, card_count}`; копия состава целиком. При изменении версии — конфликт. |
 
-`Card`: `{id, language_id, sense_id, visibility, owner_user_id, state, version, published_revision, draft_revision, content, progress}`. Для чужих общих карточек сведения о владельце не нужны. `content`: `{expression, translation, definition, examples[], morphology, accepted_forms[], article_forms[], pronunciations[], image_asset_id, dictionary_links[], source_refs[]}`. Примеры содержат исходную фразу и необязательный перевод; `article_forms` — `{id, article, written_form, grammatical_note?}`. Произношение: `{id, form_id?, locale, ipa?, asset_id, source_ref?, is_default}`. Отсутствие конкретного медиа представляется явно. Ключей S3 и служебных промптов в `Card` нет.
+`Card`: `{id, language_id, word_sense_id, visibility, owner_user_id, state, version, published_revision, draft_revision, content, progress}`. Для чужих общих карточек сведения о владельце не нужны. `content`: `{expression, translation, definition, examples[], morphology, accepted_forms[], article_forms[], pronunciations[], image_asset_id, dictionary_links[], source_refs[]}`. Примеры содержат исходную фразу и необязательный перевод; `article_forms` — `{id, article, written_form, grammatical_note?}`. Произношение: `{id, form_id?, locale, ipa?, asset_id, source_ref?, is_default}`. Отсутствие конкретного медиа представляется явно. Ключей S3 и служебных промптов в `Card` нет.
 
 Одна готовая общая карточка на смысл/язык перевода; своих может быть несколько. API не разрешает пользователю менять общую карточку. Административные скрипты используют те же предметные проверки, отдельная публичная админ-панель здесь не проектируется.
 
@@ -144,7 +144,7 @@
 | `GET /imports` | Собственные импорты: `status`, пагинация. | Название, язык, этап, время, ID активного задания. |
 | `GET /imports/{id}` | Состояние и сводка анализа. | Версия, этап, количество кандидатов, предупреждения, ссылка на результат применения. |
 | `GET /imports/{id}/candidates` | `resolution`, `hide_learned`, `q`, пагинация. | Слова/выражения, определения, вхождения, варианты смыслов/карточек, прогресс, состояние выбора. |
-| `PATCH /imports/{id}/candidates/{candidate_id}` | `If-Match`; `{selected?, resolution?}`. | Кандидат с новой версией. `resolution` — выбранный доступный `sense_id/card_id` либо подтверждённое `new_sense`. |
+| `PATCH /imports/{id}/candidates/{candidate_id}` | `If-Match`; `{selected?, resolution?}`. | Кандидат с новой версией. `resolution` — выбранный доступный `word_sense_id/card_id` либо подтверждённое `new_word_sense`. |
 | `POST /imports/{id}/selection` | `{action: "select_all"|"clear_all", filter?, expected_import_version}`. | Число выбранных и новая версия импорта; применяется ко всему фильтру, не только странице. |
 | `POST /imports/{id}/apply` | `{expected_import_version, target: {folder_id}}` либо `{expected_import_version, target: {parent_id, name}}`. | `201 {folder_id, linked_count, created_card_ids, job_ids}`; генерации новых карточек идут в фоне. |
 | `GET /jobs/{id}` | Доступное пользователю задание. | Тип, статус, этап, попытки, безопасная ошибка, результат/ID ресурса; `progress` только если измерим. |

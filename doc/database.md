@@ -9,7 +9,7 @@
 ## 1. Схема связей и правила записи
 
 ```text
-languages --< lexical_entries --< senses --< cards --< card_revisions
+languages --< lexical_entries --< word_senses --< cards --< card_revisions
                                                   |          |
                                                   |          +--< card_article_forms
                                                   |          +--< card_pronunciations --> media_assets
@@ -50,8 +50,8 @@ catalog_collections --< catalog_collection_cards --> cards
 | `languages` | `id`, `code text`, `display_name text`, `status text`, `catalog_version bigint`, `created_at`, `updated_at` | Коды уникальны. `status=preparing|published|disabled`; ru может быть языком перевода без собственного учебного корня. |
 | `content_sources` | `id`, `provider text`, `dataset_version text`, `url text?`, `license_name text?`, `license_url text?`, `attribution text?`, `imported_at timestamptz` | Происхождение словаря/медиа. Отсутствие сведений о правах требует проверки до публикации, не означает разрешение. |
 | `lexical_entries` | `id`, `language_id FK languages`, `lemma text`, `normalized_lemma text`, `kind text`, `part_of_speech text?`, `visibility text`, `owner_user_id uuid? FK users`, `created_at`, `updated_at` | Слово либо выражение (`word|expression`). Одинаковое написание не является уникальным ключом: возможны омонимы. Общая запись имеет owner=null, приватная — владельца. |
-| `senses` | `id`, `lexical_entry_id FK lexical_entries`, `definition text`, `definition_language_id FK languages`, `domain text?`, `visibility text`, `owner_user_id uuid? FK users`, `created_at`, `updated_at` | Конкретное значение. Приватный смысл не публикуется автоматически. Общий смысл не может принадлежать приватной лексической записи. |
-| `sense_sources` | `sense_id FK senses`, `source_id FK content_sources`, `external_entry_id text`, `external_sense_id text`, `source_url text?` | PK `(source_id, external_sense_id)` при гарантированной стабильности ID источника; иначе импортёр сначала формирует составной стабильный ID. Несколько источников могут ссылаться на один смысл. |
+| `word_senses` | `id`, `lexical_entry_id FK lexical_entries`, `definition text`, `definition_language_id FK languages`, `domain text?`, `visibility text`, `owner_user_id uuid? FK users`, `created_at`, `updated_at` | Конкретное значение. Приватный смысл не публикуется автоматически. Общий смысл не может принадлежать приватной лексической записи. |
+| `word_sense_sources` | `word_sense_id FK word_senses`, `source_id FK content_sources`, `external_entry_id text`, `external_sense_id text`, `source_url text?` | PK `(source_id, external_sense_id)` при гарантированной стабильности ID источника; иначе импортёр сначала формирует составной стабильный ID. Несколько источников могут ссылаться на один смысл. |
 
 Общая карточка не может ссылаться на приватный смысл. Собственная карточка может ссылаться на общий либо собственный приватный смысл. Язык карточки выводится из lexical entry и дублируется для проверок/индексов с контролем согласованности. Другие значения слова находятся через `lexical_entry_id`. Таблица произвольных синонимов пока не вводится.
 
@@ -59,7 +59,7 @@ catalog_collections --< catalog_collection_cards --> cards
 
 | Таблица | Поля | Назначение и ограничения |
 | --- | --- | --- |
-| `cards` | `id`, `sense_id FK senses`, `language_id FK languages`, `translation_language_id FK languages`, `visibility text`, `owner_user_id uuid? FK users`, `state text`, `published_revision integer?`, `draft_revision integer?`, `version`, `created_at`, `updated_at`, `archived_at timestamptz?` | Устойчивая идентичность карточки и указатели версий. `state=draft|generating|ready|failed`. При новой черновой версии существующая опубликованная продолжает работать. Частичный UNIQUE `(sense_id, translation_language_id)` для неархивных общих карточек. |
+| `cards` | `id`, `word_sense_id FK word_senses`, `language_id FK languages`, `translation_language_id FK languages`, `visibility text`, `owner_user_id uuid? FK users`, `state text`, `published_revision integer?`, `draft_revision integer?`, `version`, `created_at`, `updated_at`, `archived_at timestamptz?` | Устойчивая идентичность карточки и указатели версий. `state=draft|generating|ready|failed`. При новой черновой версии существующая опубликованная продолжает работать. Частичный UNIQUE `(word_sense_id, translation_language_id)` для неархивных общих карточек. |
 | `card_revisions` | `card_id FK cards`, `revision integer`, `expression text`, `translation text`, `definition text?`, `examples jsonb`, `morphology jsonb`, `accepted_forms jsonb`, `dictionary_links jsonb`, `state text`, `created_at`, `published_at timestamptz?` | PK `(card_id,revision)`. Полный снимок текста, форм и грамматики. Опубликованная версия неизменяема. `state=draft|generating|published|failed|superseded`. Архивирование карточки не удаляет ревизии. |
 | `card_revision_sources` | `card_id`, `revision`, `source_id FK content_sources`, `source_url text?`, `note text?` | PK `(card_id,revision,source_id)`, составной FK на ревизию. Атрибуция конкретного снимка контента. |
 | `card_article_forms` | `id`, `card_id`, `revision`, `article text`, `written_form text`, `grammatical_note text?`, `position integer` | Составной FK на ревизию. Список допустимых вариантов «артикль + форма», а не выбор единственного артикля. UNIQUE `(card_id,revision,position)`. |
@@ -115,8 +115,8 @@ catalog_collections --< catalog_collection_cards --> cards
 | Таблица | Поля | Назначение и ограничения |
 | --- | --- | --- |
 | `imports` | `id`, `user_id FK users`, `language_id FK languages`, `title text`, `source_type text`, `source_text text?`, `source_hash text`, `status text`, `analysis_version text?`, `catalog_version bigint?`, `active_job_id uuid? FK jobs`, `version`, `applied_folder_id uuid? FK folders`, `applied_at timestamptz?`, `apply_receipt jsonb?`, `created_at`, `updated_at`, `source_expires_at timestamptz?` | Приватный материал и жизненный цикл `queued|analyzing|awaiting_selection|applied|failed|cancelled`. Для предлагаемого первого входа source_type=text. source_text может очищаться по будущей политике хранения. Квитанция применения остаётся для идемпотентного ответа. |
-| `import_candidates` | `id`, `import_id FK imports`, `analysis_item_key text`, `lemma text`, `kind text`, `part_of_speech text?`, `proposed_definition text?`, `proposed_translation text?`, `resolution_state text`, `selected boolean`, `selected_sense_id uuid? FK senses`, `selected_card_id uuid? FK cards`, `new_sense jsonb?`, `created_card_id uuid? FK cards`, `version` | UNIQUE `(import_id,analysis_item_key)`. `matched|ambiguous|unmatched|confirmed_new`. Выбранный старый смысл и new_sense взаимоисключающие. card обязан соответствовать выбранному смыслу. |
-| `candidate_sense_options` | `candidate_id FK import_candidates`, `sense_id FK senses`, `rank integer`, `confidence numeric?`, `explanation text?` | PK `(candidate_id,sense_id)`. Варианты сопоставления; confidence не объявляется калиброванной вероятностью. |
+| `import_candidates` | `id`, `import_id FK imports`, `analysis_item_key text`, `lemma text`, `kind text`, `part_of_speech text?`, `proposed_definition text?`, `proposed_translation text?`, `resolution_state text`, `selected boolean`, `selected_word_sense_id uuid? FK word_senses`, `selected_card_id uuid? FK cards`, `new_word_sense jsonb?`, `created_card_id uuid? FK cards`, `version` | UNIQUE `(import_id,analysis_item_key)`. `matched|ambiguous|unmatched|confirmed_new`. Выбранный старый смысл и new_word_sense взаимоисключающие. card обязан соответствовать выбранному смыслу. |
+| `candidate_word_sense_options` | `candidate_id FK import_candidates`, `word_sense_id FK word_senses`, `rank integer`, `confidence numeric?`, `explanation text?` | PK `(candidate_id,word_sense_id)`. Варианты сопоставления; confidence не объявляется калиброванной вероятностью. |
 | `candidate_occurrences` | `id`, `candidate_id FK import_candidates`, `segments jsonb`, `surface text`, `context_start integer`, `context_end integer`, `context text` | Вхождения конкретного смысла. segments — упорядоченные диапазоны `[start,end)` Unicode code points исходного текста; допускаются разорванные выражения. Контекст приватен. |
 
 Нельзя объединять кандидатов только по `lemma`: одно слово в тексте может иметь разные смыслы. Нельзя считать один словарный смысл одинаковым с другим только из-за перевода. Изменение кандидата блокирует родительский импорт и повышает его версию, чтобы отбор и применение были согласованы. Применение повторно использует выбранные карточки, создаёт недостающие приватные и задания; исходный текст не попадает в общий каталог.
@@ -158,7 +158,7 @@ Worker получает аренду короткой транзакцией, в
 | --- | --- |
 | Повторения пользователя | `user_card_progress(user_id,next_review_at,card_id)` WHERE state='reviewing'. |
 | Дерево и обратные связи | `folders(user_id,parent_id,id)`, `folder_cards(card_id,folder_id)`. |
-| Слова и смыслы | `lexical_entries(language_id,normalized_lemma,id)`, `senses(lexical_entry_id,id)`, `cards(sense_id,visibility,owner_user_id)`. |
+| Слова и смыслы | `lexical_entries(language_id,normalized_lemma,id)`, `word_senses(lexical_entry_id,id)`, `cards(word_sense_id,visibility,owner_user_id)`. |
 | История по дням | `lesson_results(user_id,activity_date,mode,id)`, `learning_events(user_id,card_id,occurred_at,id)`. |
 | Выбор заданий | `jobs(available_at,id)` WHERE status='pending'; `jobs(lease_until)` WHERE status='running'. |
 | Импорты | `imports(user_id,created_at,id)`, `import_candidates(import_id,resolution_state,id)`. |
