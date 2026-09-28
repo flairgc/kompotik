@@ -4,7 +4,7 @@
 
 Статус: проект логической схемы PostgreSQL, не SQL-миграция. Дата: 25 сентября 2026 года. Имена таблиц и детализация полей предлагаются для обсуждения.
 
-Основа: [архитектура v0.5](architecture.md), [функциональные требования](https://docs.google.com/document/d/13DhyOBaIGAJRgvpVTTC32wxpCtCYCFFowQn9RIn3KDU/edit), [нефункциональные требования](https://docs.google.com/document/d/1c5UXA0RfIJ75Z2sQTfz0E-spPfpsIqhiP_baDNj83vI/edit). Поздние уточнения из архитектуры имеют приоритет. Контракты: [API](api.md), [сервисы](service-interfaces.md), [экраны](user-interface.md).
+Основа: [архитектура v0.6](architecture.md), [функциональные требования](https://docs.google.com/document/d/13DhyOBaIGAJRgvpVTTC32wxpCtCYCFFowQn9RIn3KDU/edit), [нефункциональные требования](https://docs.google.com/document/d/1c5UXA0RfIJ75Z2sQTfz0E-spPfpsIqhiP_baDNj83vI/edit). Поздние уточнения из архитектуры имеют приоритет. Контракты: [API](api.md), [сервисы](service-interfaces.md), [экраны](user-interface.md).
 
 ## 1. Схема связей и правила записи
 
@@ -14,7 +14,7 @@ languages --< lexical_entries --< word_senses --< cards --< card_revisions
                                                   |          +--< card_article_forms
                                                   |          +--< card_pronunciations --> media_assets
                                                   |          +--< card_revision_media --> media_assets
-users --< folders --< folder_cards >---------------+
+users --< folders --< card_sets --< card_set_cards --> cards
   |          |
   |          +--> folders (родитель)
   +--< user_card_progress >------------------------+
@@ -77,12 +77,13 @@ catalog_collections --< catalog_collection_cards --> cards
 
 | Таблица | Поля | Назначение и ограничения |
 | --- | --- | --- |
-| `folders` | `id`, `user_id FK users`, `language_id FK languages`, `parent_id uuid? FK folders`, `is_root boolean`, `name text`, `source_label text?`, `origin_collection_id uuid? FK catalog_collections`, `origin_collection_version bigint?`, `version`, `created_at`, `updated_at` | Папка-набор. UNIQUE `(user_id,language_id)` WHERE is_root. Только корень имеет parent=null. Родитель того же владельца/языка. |
-| `folder_cards` | `folder_id FK folders`, `card_id FK cards`, `added_at timestamptz` | PK `(folder_id,card_id)`. Только карточка языка папки и доступная владельцу. Прогресс здесь не хранится. |
+| `folders` | `id`, `user_id FK users`, `language_id FK languages`, `parent_id uuid? FK folders`, `is_root boolean`, `name text`, `source_label text?`, `version`, `created_at`, `updated_at` | Только папки и наборы. UNIQUE `(user_id,language_id)` WHERE is_root. Только корень имеет parent=null. Родитель того же владельца/языка; циклы запрещены. |
+| `card_sets` | `id`, `user_id FK users`, `language_id FK languages`, `folder_id FK folders`, `name text`, `source_label text?`, `origin_collection_id uuid? FK catalog_collections`, `origin_collection_version bigint?`, `version`, `created_at`, `updated_at` | Набор содержит только карточки. Обязательная папка того же владельца/языка. Нет родителя-набора и вложенных контейнеров. |
+| `card_set_cards` | `card_set_id FK card_sets`, `card_id FK cards`, `added_at timestamptz` | PK `(card_set_id,card_id)`. Только карточка языка набора и доступная владельцу. Прогресс здесь не хранится. |
 | `catalog_collections` | `id`, `language_id FK languages`, `title text`, `description text`, `goal text?`, `level text?`, `status text`, `version`, `created_at`, `updated_at` | Редакторская подборка; `draft|published|archived`. Состав при копировании читается вместе с версией под блокировкой. |
 | `catalog_collection_cards` | `collection_id FK catalog_collections`, `card_id FK cards`, `position integer` | PK `(collection_id,card_id)`. Только общие готовые карточки того же языка. Изменение состава увеличивает версию подборки. |
 
-Счётчики и завершённость папок — вычисляемая проекция по уникальным `card_id` всего поддерева. Постоянного поля `folder.learned` нет. Удаление поддерева удаляет его `folder_cards`, но не `cards`, `user_card_progress` и историю. Общая библиотека пользователя — объединение связей его папок; собственная карточка без папки сохраняется среди его карточек, но не входит в счётчик библиотеки.
+Счётчики и завершённость набора вычисляются по его карточкам; сводки папок — по уникальным `card_id` всех наборов поддерева. Пустой контейнер не считается изученным. Постоянных полей `folder.learned` и `card_set.learned` нет. Удаление поддерева удаляет вложенные `folders`, `card_sets` и `card_set_cards`, но не `cards`, `user_card_progress` и историю. Удаление набора удаляет только этот набор и его связи. Общая библиотека пользователя — объединение связей его наборов; собственная карточка без набора сохраняется среди его карточек, но не входит в счётчик библиотеки.
 
 Для перемещения дерева одной проверки до транзакции недостаточно. Предложение: сериализовать изменения дерева одного пользователя транзакционной блокировкой, затем проверить предков, язык и владельца. Составные FK обеспечивают совпадение владельца/языка родителя; триггер/предметная команда проверяет отсутствие цикла и допустимость связи с карточкой.
 
@@ -114,7 +115,7 @@ catalog_collections --< catalog_collection_cards --> cards
 
 | Таблица | Поля | Назначение и ограничения |
 | --- | --- | --- |
-| `imports` | `id`, `user_id FK users`, `language_id FK languages`, `title text`, `source_type text`, `source_text text?`, `source_hash text`, `status text`, `analysis_version text?`, `catalog_version bigint?`, `active_job_id uuid? FK jobs`, `version`, `applied_folder_id uuid? FK folders`, `applied_at timestamptz?`, `apply_receipt jsonb?`, `created_at`, `updated_at`, `source_expires_at timestamptz?` | Приватный материал и жизненный цикл `queued|analyzing|awaiting_selection|applied|failed|cancelled`. Для предлагаемого первого входа source_type=text. source_text может очищаться по будущей политике хранения. Квитанция применения остаётся для идемпотентного ответа. |
+| `imports` | `id`, `user_id FK users`, `language_id FK languages`, `title text`, `source_type text`, `source_text text?`, `source_hash text`, `status text`, `analysis_version text?`, `catalog_version bigint?`, `active_job_id uuid? FK jobs`, `version`, `applied_card_set_id uuid? FK card_sets`, `applied_at timestamptz?`, `apply_receipt jsonb?`, `created_at`, `updated_at`, `source_expires_at timestamptz?` | Приватный материал и жизненный цикл `queued|analyzing|awaiting_selection|applied|failed|cancelled`. Для предлагаемого первого входа source_type=text. source_text может очищаться по будущей политике хранения. Квитанция применения остаётся для идемпотентного ответа. |
 | `import_candidates` | `id`, `import_id FK imports`, `analysis_item_key text`, `lemma text`, `kind text`, `part_of_speech text?`, `proposed_definition text?`, `proposed_translation text?`, `resolution_state text`, `selected boolean`, `selected_word_sense_id uuid? FK word_senses`, `selected_card_id uuid? FK cards`, `new_word_sense jsonb?`, `created_card_id uuid? FK cards`, `version` | UNIQUE `(import_id,analysis_item_key)`. `matched|ambiguous|unmatched|confirmed_new`. Выбранный старый смысл и new_word_sense взаимоисключающие. card обязан соответствовать выбранному смыслу. |
 | `candidate_word_sense_options` | `candidate_id FK import_candidates`, `word_sense_id FK word_senses`, `rank integer`, `confidence numeric?`, `explanation text?` | PK `(candidate_id,word_sense_id)`. Варианты сопоставления; confidence не объявляется калиброванной вероятностью. |
 | `candidate_occurrences` | `id`, `candidate_id FK import_candidates`, `segments jsonb`, `surface text`, `context_start integer`, `context_end integer`, `context text` | Вхождения конкретного смысла. segments — упорядоченные диапазоны `[start,end)` Unicode code points исходного текста; допускаются разорванные выражения. Контекст приватен. |
@@ -139,7 +140,7 @@ Worker получает аренду короткой транзакцией, в
 | `sync_clock` | `id smallint PK`, `revision bigint` | Одна строка. Предлагаемый простой механизм порядка: каждая транзакция синхронизируемых изменений вначале блокирует её и увеличивает revision, удерживая до commit. Rollback откатывает счётчик. Это сериализует записи, приемлемость проверяется нагрузкой. |
 | `change_log` | `revision bigint`, `ordinal integer`, `audience_user_id uuid? FK users`, `entity_type text`, `entity_id uuid`, `operation text`, `entity_version bigint?`, `payload jsonb`, `created_at` | PK `(revision,ordinal)`. upsert или delete/tombstone. null audience — общедоступное изменение; private только с user. Курсор включает обе части и область доступа. |
 | `sync_snapshots` | `id`, `user_id FK users`, `base_revision bigint`, `payload jsonb`, `created_at`, `expires_at timestamptz` | Временный фиксированный полный снимок для постраничной начальной загрузки. Для небольшой библиотеки материализуется целиком; при росте — отдельные строки элементов. |
-| `offline_packages` | `id`, `user_id FK users`, `folder_id uuid? FK folders`, `snapshot_revision bigint?`, `status text`, `policy_version uuid? FK learning_policies`, `requested_audio_locales text[]`, `byte_size bigint?`, `job_id FK jobs`, `created_at`, `expires_at timestamptz` | Временный снимок поддерева: `pending|building|ready|failed`. Не отражает фактическую готовность устройства. При удалении папки FK обнуляется, новые скачивания пакета запрещаются предметной проверкой. |
+| `offline_packages` | `id`, `user_id FK users`, `folder_id uuid? FK folders`, `card_set_id uuid? FK card_sets`, `snapshot_revision bigint?`, `status text`, `policy_version uuid? FK learning_policies`, `requested_audio_locales text[]`, `byte_size bigint?`, `job_id FK jobs`, `created_at`, `expires_at timestamptz` | Временный снимок всех наборов поддерева или одного набора: `pending|building|ready|failed`. Не отражает фактическую готовность устройства. При создании ровно один из `folder_id`/`card_set_id` не null (CHECK запрещает два источника). При удалении источника его FK обнуляется; оба null означают утрату источника и запрещают новые скачивания предметной проверкой. |
 | `offline_package_items` | `package_id FK offline_packages`, `ordinal integer`, `card_id FK cards`, `card_revision integer`, `progress_snapshot jsonb`, `content_snapshot jsonb`, `asset_manifest jsonb` | PK `(package_id,ordinal)`, UNIQUE `(package_id,card_id)`, FK ревизии. Manifest: ID, hash, размер и назначение медиа; без подписанных URL. |
 | `idempotency_keys` | `scope text`, `key text`, `request_hash text`, `state text`, `response_status integer?`, `response_body jsonb?`, `resource_id uuid?`, `created_at`, `expires_at timestamptz` | PK `(scope,key)`, где scope включает пользователя/маршрут/метод либо анонимную регистрацию. Только обычные команды; уроки и события имеют собственные постоянные ключи. |
 | `schema_migrations` | `version text PK`, `checksum text`, `applied_at timestamptz` | Учёт применённых SQL-миграций. Одна миграция — один неизменяемый файл. |
@@ -148,7 +149,7 @@ Worker получает аренду короткой транзакцией, в
 
 Курсор продвигается по просмотренным записям, включая отфильтрованные чужие изменения, не раскрывая их. Для общей карточки клиенту передаётся изменение только если карточка относится к его синхронизируемой библиотеке; добавление новой связи обязательно сопровождается актуальным снимком карточки. Это предотвращает потерю обновления, которое было до добавления карточки в библиотеку.
 
-Изменения и tombstone создаются в одной транзакции с предметной записью. Удалённые папки/связи можно удалить физически, оставив tombstone на согласованный срок; карточки с учебной историей архивируются. Устаревший курсор требует полной загрузки. Сроки журналов, snapshots и медиаверсий задаются совместно с пределом офлайна.
+Изменения и tombstone создаются в одной транзакции с предметной записью. Удалённые папки/наборы/связи можно удалить физически, оставив tombstone на согласованный срок; карточки с учебной историей архивируются. Устаревший курсор требует полной загрузки. Сроки журналов, snapshots и медиаверсий задаются совместно с пределом офлайна.
 
 ## 10. Индексы и контроль целостности
 
@@ -157,7 +158,7 @@ Worker получает аренду короткой транзакцией, в
 | Запрос | Индекс/ограничение |
 | --- | --- |
 | Повторения пользователя | `user_card_progress(user_id,next_review_at,card_id)` WHERE state='reviewing'. |
-| Дерево и обратные связи | `folders(user_id,parent_id,id)`, `folder_cards(card_id,folder_id)`. |
+| Дерево и обратные связи | `folders(user_id,parent_id,id)`, `card_sets(user_id,folder_id,id)`, `card_set_cards(card_id,card_set_id)`. |
 | Слова и смыслы | `lexical_entries(language_id,normalized_lemma,id)`, `word_senses(lexical_entry_id,id)`, `cards(word_sense_id,visibility,owner_user_id)`. |
 | История по дням | `lesson_results(user_id,activity_date,mode,id)`, `learning_events(user_id,card_id,occurred_at,id)`. |
 | Выбор заданий | `jobs(available_at,id)` WHERE status='pending'; `jobs(lease_until)` WHERE status='running'. |
@@ -173,10 +174,10 @@ Cross-table правила языка, приватности, циклов па
 | Локальная запись | Поля/содержание |
 | --- | --- |
 | `account_state` | account ID, последний sync cursor, server-time offset, версии схем/политик. Секреты native — в защищённом системном хранилище. |
-| `cached_cards`, `cached_progress`, `cached_folders` | Серверные снимки с версиями и областью аккаунта. Локальный предварительный прогресс хранится отдельно от подтверждённого. |
+| `cached_cards`, `cached_progress`, `cached_folders`, `cached_card_sets`, `cached_card_set_cards` | Серверные снимки с версиями и областью аккаунта. Локальный предварительный прогресс хранится отдельно от подтверждённого. |
 | `lesson_drafts` | lesson ID, язык, режим, снимок карточек/политики, план заданий, ответы, текущая позиция, циклы и основания прогресса. |
 | `result_outbox` | result ID, device sequence, неизменяемый JSON отчёта, состояние отправки, число попыток, следующая попытка, последняя ошибка. |
-| `local_packages`, `cached_assets` | папка/manifest, перечень обязательных файлов, asset ID, hash, локальное местоположение, размер, готовность и ссылки использования. |
+| `local_packages`, `cached_assets` | папка или набор / manifest, перечень обязательных файлов, asset ID, hash, локальное местоположение, размер, готовность и ссылки использования. |
 
 Каждый ответ сохраняет черновик; завершение одной локальной транзакцией записывает отчёт, предварительный прогресс и outbox. Обновление приложения не очищает эти записи. Скачанный файл можно удалять только если его не держит пакет или незавершённый урок. Неотправленные результаты не удаляются из-за истечения серверного снимка.
 

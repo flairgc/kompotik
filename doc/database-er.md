@@ -21,7 +21,8 @@
 erDiagram
     users["users"]
     folders["folders"]
-    folderCards["folder_cards"]
+    cardSets["card_sets"]
+    cardSetCards["card_set_cards"]
     languages["languages"]
     lexicalEntries["lexical_entries"]
     word_senses["word_senses"]
@@ -35,8 +36,9 @@ erDiagram
 
     users ||..o{ folders : owns
     folders |o..o{ folders : parent
-    folders ||--o{ folderCards : contains
-    cards ||--o{ folderCards : included_in
+    folders ||..o{ cardSets : contains
+    cardSets ||--o{ cardSetCards : contains
+    cards ||--o{ cardSetCards : included_in
     languages ||..o{ lexicalEntries : language
     lexicalEntries ||..o{ word_senses : meanings
     word_senses ||..o{ cards : represented_by
@@ -51,7 +53,7 @@ erDiagram
     word_senses |o..o{ importCandidates : selected_word_sense
 ```
 
-Связь папок и карточек — многие ко многим через `folder_cards`. Прогресс относится к паре пользователь/карточка, а не к папке. Один смысл может иметь общую и несколько приватных карточек. Общая схема намеренно опускает медиа, авторизацию и технические таблицы — они раскрыты ниже.
+Папка содержит папки и наборы; связь наборов и карточек — многие ко многим через `card_set_cards`. Прямой связи папки с карточкой нет. Прогресс относится к паре пользователь/карточка, а не к набору. Один смысл может иметь общую и несколько приватных карточек. Общая схема намеренно опускает медиа, авторизацию и технические таблицы — они раскрыты ниже.
 
 ## 2. Пользователи, устройства и настройки
 
@@ -264,7 +266,7 @@ FK ревизии — пара `(card_id, revision)`, а не отдельная
 
 У общей неархивной карточки уникальна пара `(word_sense_id, translation_language_id)`. Для приватных карточек такого ограничения нет. Порядок формы уникален в пределах ревизии; default-произношение ограничено одним на каждую форму ревизии, включая основную форму с `form_id=null`. Готовое аудио переиспользуется, но новое содержимое файла получает новый `media_assets.id` и ключ.
 
-## 5. Папки и готовые подборки
+## 5. Папки, наборы и готовые подборки
 
 ```mermaid
 erDiagram
@@ -279,12 +281,19 @@ erDiagram
         uuid user_id FK
         uuid language_id FK
         uuid parent_id FK "nullable: root"
-        uuid origin_collection_id FK "nullable"
         boolean is_root
         text name
     }
-    folderCards["folder_cards"] {
-        uuid folder_id PK, FK
+    cardSets["card_sets"] {
+        uuid id PK
+        uuid user_id FK
+        uuid language_id FK
+        uuid folder_id FK
+        uuid origin_collection_id FK "nullable"
+        text name
+    }
+    cardSetCards["card_set_cards"] {
+        uuid card_set_id PK, FK
         uuid card_id PK, FK
     }
     cards["cards"] {
@@ -305,15 +314,18 @@ erDiagram
     users ||..o{ folders : owns
     languages ||..o{ folders : language
     folders |o..o{ folders : parent
-    folders ||--o{ folderCards : contains
-    cards ||--o{ folderCards : included_in
+    folders ||..o{ cardSets : contains
+    cardSets ||--o{ cardSetCards : contains
+    cards ||--o{ cardSetCards : included_in
     languages ||..o{ catalogCollections : language
     catalogCollections ||--o{ catalogCollectionCards : composition
     cards ||--o{ catalogCollectionCards : included_in
-    catalogCollections |o..o{ folders : copied_from
+    users ||..o{ cardSets : owns
+    languages ||..o{ cardSets : language
+    catalogCollections |o..o{ cardSets : copied_from
 ```
 
-Для корней уникальна пара `(user_id, language_id)`. Проверка дерева запрещает циклы и родителя другого владельца/языка. Связь `copied_from` сохраняет происхождение, но не означает синхронизацию состава личной папки с подборкой. Удаление связи из папки не удаляет карточку или её прогресс.
+Для корней уникальна пара `(user_id, language_id)`. Проверка дерева запрещает циклы и родителя другого владельца/языка. Связь `copied_from` сохраняет происхождение, но не означает синхронизацию состава личного набора с подборкой. У набора обязательна папка того же владельца и языка; наборы не содержат другие наборы или папки. Удаление связи из набора не удаляет карточку или её прогресс.
 
 ## 6. Прогресс и история обучения
 
@@ -429,7 +441,7 @@ erDiagram
         uuid user_id FK
         uuid language_id FK
         uuid active_job_id FK "nullable"
-        uuid applied_folder_id FK "nullable"
+        uuid applied_card_set_id FK "nullable"
         text status
         bigint version
     }
@@ -491,11 +503,13 @@ erDiagram
     cards |o..o{ importCandidates : created_card
 ```
 
-Межобластные FK: `imports.language_id → languages.id` обязателен; `imports.applied_folder_id → folders.id` nullable. Уникальны `(import_id, analysis_item_key)` и `(job_id, attempt_number)`. Выбранный смысл и созданная карточка появляются по мере разрешения кандидата; они не обязательны при первом результате анализа.
+Межобластные FK: `imports.language_id → languages.id` обязателен; `imports.applied_card_set_id → card_sets.id` nullable. Уникальны `(import_id, analysis_item_key)` и `(job_id, attempt_number)`. Выбранный смысл и созданная карточка появляются по мере разрешения кандидата; они не обязательны при первом результате анализа.
 
 `jobs.resource_id` — полиморфная предметная ссылка, а `operation_id` — ID операции специализированного сервиса. FK-линии к ним намеренно не нарисованы. Реестр операций отдельного сервиса описан в [контрактах сервисов](service-interfaces.md), он не является частью предметной схемы основного приложения.
 
 ## 8. Офлайн-пакеты и синхронизация
+
+Пакет создаётся по одному источнику: папке со всеми наборами поддерева либо отдельному набору. Одновременно задать `folder_id` и `card_set_id` нельзя. Оба FK могут стать null после удаления источника; новые скачивания такого пакета запрещены. Удаление локальной копии не удаляет папку или набор на сервере.
 
 ```mermaid
 erDiagram
@@ -515,6 +529,7 @@ erDiagram
         uuid id PK
         uuid user_id FK
         uuid folder_id FK "nullable"
+        uuid card_set_id FK "nullable"
         uuid job_id FK
         uuid policy_version FK "nullable"
         bigint snapshot_revision "nullable, not FK"
@@ -550,7 +565,11 @@ erDiagram
     }
 
     users ||..o{ offlinePackages : prepares
+    cardSets["card_sets"] {
+        uuid id PK
+    }
     folders |o..o{ offlinePackages : source_folder
+    cardSets |o..o{ offlinePackages : source_card_set
     jobs ||..o{ offlinePackages : builds
     learningPolicies |o..o{ offlinePackages : fixed_policy
     offlinePackages ||--o{ offlinePackageItems : manifest
